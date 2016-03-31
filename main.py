@@ -5,120 +5,87 @@ import json
 import time
 import yaml
 
+from persistentdict import PersistentDict
 from slackclient import SlackClient
 
-class Database(dict):
-    def __init__(self, filename):
-        self.filename = filename
-        self.open(filename)
+db = PersistentDict('slackirc.json')
 
-    def open(self, filename):
-        self.clear()
+class Bot(object):
+    def __init__(self):
+        with open('config.yml', 'r') as fp:
+            self.config = yaml.load(fp)
+        self.slack = None
+        self.irc = {}
+
+    def run(self):
+        if self.slack is None:
+            self.openSlackConnection()
+
+        for user in db['users']:
+            if 'nick' in user and user not in self.irc:
+                openIrcConnection(self, user)
+
+    def openSlackConnection(self):
         try:
-            with open(filename, 'r') as fp:
-                self.update(json.load(fp))
-        except:
+            self.slack = SlackClient(self.config['token'])
+            if not self.slack.rtm_connect():
+                return
+
+            self.slack.server.websocket.sock.setblocking(True)
+            while True:
+                for event in self.slack.rtm_read():
+                    self.handleSlackEvent(event)
+        except Exception as e:
+            print 'ERROR: %s' % e
+
+        self.slack = None
+
+    def handleSlackEvent(self, event):
+        try:
+            if event['type'] != 'message' or 'subtype' in event:
+                return
+
+            user = self.slack.server.users.find(event['user'])
+            message = event['text']
+
+            if event['channel'][0] == 'D':
+                self.handleSlackPrivateMessage(user, message)
+            else:
+                channel = self.slack.server.channels.find(event['channel'])
+                self.handleSlackChannelMessage(channel, user, message)
+        except Exception as e:
+            print 'ERROR: %s' % e
+
+    def handleSlackChannelMessage(self, channel, user, message):
+        print '#%s/%s: %s' % (channel.name, user.name, message)
+
+    def handleSlackPrivateMessage(self, user, message):
+        try:
+            args = message.split(' ')
+            if args[0] == 'sync':
+                db['channels'].setdefault(args[1], {})['sync'] = True
+                db.save()
+
+            elif args[0] == 'set':
+                db['users'].setdefault(user.id, {})[args[1]] = args[2]
+                db.save()
+
+                if args[1] == 'nick':
+                    print "TODO: set user's nick in irc"
+                elif args[1] == 'password':
+                    print "TODO: identify with nickserv"
+
+            elif args[0] == 'unset':
+                del db['users'].setdefault(user.id, {})[args[1]]
+                db.save()
+        except Exception as e:
             pass
 
-    def save(self):
-        with open(self.filename, 'w') as fp:
-            json.dump(self, fp)
+        print '@%s: %s' % (user.name, message)
 
-    def __getitem__(self, key):
-        return self.setdefault(key, {})
+    def openIrcConnection(self, user):
+        self.irc[user] = 
 
-    def __setitem__(self, key, value):
-        super(Database, self).__setitem__(key, value)
-        self.save()
-
-    def __delitem__(self, key):
-        super(Database, self).__delitem__(key)
-        self.save()
-
-db = Database('slackirc.json')
-
-with open('config.yml', 'r') as fp:
-    config = yaml.load(fp)
-
-slack = SlackClient(config['token'])
-if slack.rtm_connect():
-    while True:
-        events = slack.rtm_read()
-
-        for event in events:
-            if event['type'] == 'message':
-                if 'subtype' in event:
-                    continue
-
-                if 'text' not in event:
-                    continue
-
-                user = slack.server.users.find(event.get('user', None))
-                if user is None:
-                    continue
-
-                channel = slack.server.channels.find(event.get('channel', None))
-                if channel is None:
-                    continue
-
-                message = event['text']
-                if channel.id[0] == 'D':
-                    args = message.split(' ')
-                    if len(args) == 3 and args[0] == 'set':
-                        db['users'].setdefault(user.id, {})[args[1]] = args[2]
-                        db.save()
-                        if args[1] == 'nick':
-                            # TODO: set user's nick in irc
-                            pass
-                        elif args[1] == 'password':
-                            # TODO: identify with nickserv
-                            pass
-                    elif len(args) == 2 and args[0] == 'unset':
-                        try:
-                            del db['users'].setdefault(user.id, {})[args[1]]
-                            db.save()
-                        except KeyError:
-                            pass
-                    print '@%s: %s' % (user.name, message)
-                else:
-                    print '#%s/%s: %s' % (channel.name, user.name, message)
-
-        if len(events) == 0:
-            time.sleep(0.2)
-
-#[
-#  id : U0VTX1MQE tz : None name : ircbot real_name :,
-#  id : U0R6LQN69 tz : America/Indiana/Indianapolis name : kolbyjack real_name :,
-#  id : USLACKBOT tz : None name : slackbot real_name : slackbot
-#],
-#[
-#  id : C0R6H9KKN name : general members : [u'U0R6LQN69', u'U0VTX1MQE'] server : username : ircbot domain : nginxirc webs
-#  id : C0R6QJBQW name : random members : [] server : username : ircbot domain : nginxirc webs
-#  id : D0VTU9SBE name : D0VTU9SBE members : [] server : username : ircbot domain : nginxirc webs
-#  id : D0VU4DV0V name : D0VU4DV0V members : [] server : username : ircbot domain : nginxirc webs
-#]
-
-
-#{
-#    u'type': u'presence_change',
-#    u'user': u'U0VTX1MQE',
-#    u'presence': u'active'
-#}
-#{
-#    u'type': u'message',
-#    u'text': u'<@U0VTX1MQE|ircbot> has joined the channel',
-#    u'ts': u'1459179847.000006',
-#    u'subtype': u'channel_join',
-#    u'inviter': u'U0R6LQN69',
-#    u'channel': u'C0R6H9KKN',
-#    u'user': u'U0VTX1MQE'
-#}
-#{
-#    u'type': u'message',
-#    u'text': u'ping',
-#    u'ts': u'1459179865.000007',
-#    u'user': u'U0R6LQN69',
-#    u'team': u'T0R6J9KH8',
-#    u'channel': u'C0R6H9KKN'
-#}
+if __name__ == '__main__':
+    Bot().run()
 
