@@ -5,6 +5,7 @@ import socket
 
 class Prefix(object):
     def __init__(self, prefix=''):
+        self.host = None
         if '!' in prefix:
             self.name, prefix = prefix.split('!', 1)
             if '@' in prefix:
@@ -13,6 +14,12 @@ class Prefix(object):
                 self.user = prefix
         else:
             self.name = prefix
+
+    def __str__(self):
+        if self.host is None:
+            return self.name
+        else:
+            return '%s@%s' % (self.name, self.host)
 
 class Message(object):
     def __init__(self, line):
@@ -33,7 +40,7 @@ class Message(object):
         self.command = self.params.pop(0)
 
     def __str__(self):
-        return "{prefix: '%s'; command: '%s'; params: '%s'}" % (self.prefix.name, self.command, self.params)
+        return "{prefix: '%s'; command: '%s'; params: '%s'}" % (self.prefix, self.command, self.params)
 
 class IrcClient(object):
     def __init__(self, nick=None, ident=None, realname=None):
@@ -60,11 +67,16 @@ class IrcClient(object):
 
         self.sock.send('USER %s 0 * :%s\r\n' % (ident, realname))
 
+    def close(self):
+        if self.sock is not None:
+            self.sock.close()
+            self.sock = None
+
     def join(self, channel):
         self.sock.send('JOIN %s\r\n' % channel)
 
     def send(self, channel, message):
-        self.sock.send('PRIVMSG %s :%s\r\n' % channel, message)
+        self.sock.send('PRIVMSG %s :%s\r\n' % (channel, message))
 
     def read(self):
         while len(self._messages) == 0:
@@ -74,21 +86,29 @@ class IrcClient(object):
 
             self._messages.extend([Message(line) for line in temp])
 
+            while len(self._messages) > 0 and self._messages[0].command == 'PING':
+                ping = self._messages.pop(0)
+                if len(ping.params) > 1:
+                    cookie = ping.params[1]
+                else:
+                    cookie = self.nick
+                self.sock.send('PONG %s\r\n' % cookie)
+
         return self._messages.pop(0)
 
     def messages(self):
         while True:
             yield self.read()
 
-client = IrcClient(nick='kolbyslack')
-client.connect('chat.freenode.net', 6667)
-for message in client.messages():
-    print message
-    if message.command == 'PING':
-        s.send('PONG %s\r\n' % args[1])
-    elif message.command == 'PRIVMSG':
-        if message.params[0][0] == '#':
-            print '%s <%s> %s' % (message.params[0], message.prefix.name, message.params[1])
-        else:
-            print '<%s> %s' % (message.params[0], message.params[1])
+if __name__ == '__main__':
+    client = IrcClient(nick='kolbyslack')
+    client.connect('chat.freenode.net', 6667)
+    client.join('#kolbyslack')
+    for message in client.messages():
+        print message
+        if message.command == 'PRIVMSG':
+            if message.params[0][0] == '#':
+                print '%s <%s> %s' % (message.params[0], message.prefix.name, message.params[1])
+            else:
+                print '<%s> %s' % (message.params[0], message.params[1])
 
