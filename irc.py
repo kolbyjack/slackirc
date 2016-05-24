@@ -43,8 +43,9 @@ class Message(object):
         return "{prefix: '%s'; command: '%s'; params: '%s'}" % (self.prefix, self.command, self.params)
 
 class IrcClient(object):
-    def __init__(self, nick=None, ident=None, realname=None):
+    def __init__(self, nick=None, ident=None, realname=None, password=None):
         self.nick = nick
+        self.password = password
         self.ident = ident
         self.realname = realname
         self.sock = None
@@ -61,6 +62,8 @@ class IrcClient(object):
         self.sock = socket.socket()
         self.sock.connect((host, port))
         self.sock.send('NICK %s\r\n' % self.nick)
+        if self.password is not None:
+            self.send('nickserv', 'identify %s' % self.password)
 
         ident = self.nick if self.ident is None else self.ident
         realname = self.nick if self.realname is None else self.realname
@@ -73,6 +76,8 @@ class IrcClient(object):
             self.sock = None
 
     def join(self, channel):
+        if channel[0] != '#':
+            channel = '#%s' % channel
         self.sock.send('JOIN %s\r\n' % channel)
 
     def send(self, channel, message):

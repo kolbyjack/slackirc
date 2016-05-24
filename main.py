@@ -15,27 +15,29 @@ with open('config.yml', 'r') as fp:
     config = yaml.load(fp)
 
 class SlackThread(threading.Thread):
-    def __init__(self, queue):
+    def __init__(self, queue, config):
         super(SlackThread, self).__init__()
         self.daemon = True
         self.queue = queue
+        self._config = config
         self.conn = None
 
     def run(self):
         try:
-            self.conn = SlackClient(config['slack']['token'])
+            print 'Connecting to slack'
+            self.conn = SlackClient(self._config['token'])
             if not self.conn.rtm_connect():
                 return
 
             self.parseLoginData(self.conn.server.login_data)
 
+            print 'Connected to slack'
             self.conn.server.websocket.sock.setblocking(True)
             while True:
                 for event in self.conn.rtm_read():
-                    print event
                     self.queue.put({'type': 'slack.event', 'data': event})
         except Exception as e:
-            print 'ERROR: %s' % e
+            print 'SLACK RUNLOOP ERROR: %s' % e
 
         self.conn = None
 
@@ -49,23 +51,24 @@ class SlackThread(threading.Thread):
 
 
 class IrcThread(threading.Thread):
-    def __init__(self, nick, queue):
+    def __init__(self, queue, config):
         super(IrcThread, self).__init__()
         self.daemon = True
-        self.nick = nick
         self.queue = queue
-        self.conn = irc.IrcClient(nick=nick)
+        self._config = config
+        self.conn = irc.IrcClient(nick=self._config['nick'], password=self._config.get('password', None))
 
     def run(self):
         try:
-            host, port = config['irc']['server'].split(':')
+            print 'Connecting to irc'
+            host, port = self._config['server'].split(':')
             self.conn.connect(host, int(port))
-            self.conn.join(config['irc']['channel'])
+            self.conn.join(self._config['channel'])
+            print 'Connected to irc'
             for message in self.conn.messages():
-                print message
                 self.queue.put({'type': 'irc.message', 'data': message})
         except Exception as e:
-            print 'ERROR: %s' % e
+            print 'IRC RUNLOOP ERROR: %s' % e
 
 
 class SlackBot(threading.Thread):
@@ -80,10 +83,10 @@ class SlackBot(threading.Thread):
         if self.slack is not None:
             return
 
-        self.slack = SlackThread(self.queue)
+        self.slack = SlackThread(self.queue, config['slack'])
         self.slack.start()
 
-        self.irc = IrcThread(config['irc']['nick'], self.queue)
+        self.irc = IrcThread(self.queue, config['irc'])
         self.irc.start()
 
         while True:
@@ -96,7 +99,7 @@ class SlackBot(threading.Thread):
 
     def handleSlackEvent(self, event):
         try:
-            if event['type'] != 'message' or 'subtype' in event:
+            if event.get('type', None) != 'message' or 'subtype' in event:
                 return
 
             user = self.slack.conn.server.users.find(event['user'])
@@ -104,24 +107,31 @@ class SlackBot(threading.Thread):
 
             if event['channel'][0] != 'D':
                 channel = self.slack.conn.server.channels.find(event['channel'])
-                print 'slack #%s/%s: %s' % (channel.name, user.name, message)
                 if channel.name == config['slack']['channel']:
-                    self.irc.conn.send(config['irc']['channel'], message)
+                    irc_channel = config['irc']['channel']
+                    if irc_channel[0] != '#':
+                        irc_channel = '#%s' % irc_channel
+                    self.irc.conn.send(irc_channel, message)
             else:
                 pass # What to do with private messages?
         except Exception as e:
-            print 'ERROR: %s' % e
+            print 'SLACK EVENT ERROR: %s' % e
 
     def handleIrcMessage(self, message):
-        print message
         if message.command == 'PRIVMSG':
             if message.params[0][0] == '#':
                 for channel in self.slack.conn.server.channels:
                     if channel.name == config['slack']['channel']:
                         channel.send_message('%s: %s' % (message.prefix.name, message.params[1]))
                         break
-            else:
-                print '@%s: %s' % (message.params[0], message.params[1])
+            elif 'privmsg' in config['irc']:
+                message = '@%s: %s' % (message.params[0], message.params[1])
+                user = '@%s' % config['irc']['privmsg']
+                print 'Sending %s to %s' % (message, user)
+                message_json = {'type': 'message', 'channel': user, 'text': message}
+                self.slack.conn.server.send_to_websocket(message_json)
+        else:
+            print message
 
 
 if __name__ == '__main__':
