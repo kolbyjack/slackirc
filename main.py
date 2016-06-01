@@ -122,7 +122,11 @@ class SlackBot(threading.Thread):
             if message.params[0][0] == '#':
                 for channel in self.slack.conn.server.channels:
                     if channel.name == config['slack']['channel']:
-                        channel.send_message('%s: %s' % (message.prefix.name, message.params[1]))
+                        if message.ctcp_command == 'ACTION':
+                            text = '_%s %s_' % (message.prefix.name, message.params[1])
+                        else:
+                            text = '*%s:* %s' % (message.prefix.name, message.params[1])
+                        channel.send_message(text)
                         break
             elif 'privmsg' in config['irc']:
                 message = '@%s: %s' % (message.params[0], message.params[1])

@@ -39,6 +39,11 @@ class Message(object):
 
         self.command = self.params.pop(0)
 
+        if self.command == 'PRIVMSG' and ord(self.params[1][0]) == 1 and ord(self.params[1][-1]) == 1:
+            self.ctcp_command, self.params[1] = self.params[1][1:-1].split(' ', 1)
+        else:
+            self.ctcp_command = None
+
     def __str__(self):
         return "{prefix: '%s'; command: '%s'; params: '%s'}" % (self.prefix, self.command, self.params)
 
