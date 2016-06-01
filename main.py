@@ -134,7 +134,7 @@ class SlackBot(threading.Thread):
                 print 'Sending %s to %s' % (message, user)
                 message_json = {'type': 'message', 'channel': user, 'text': message}
                 self.slack.conn.server.send_to_websocket(message_json)
-        else:
+        elif message.command not in ('MODE', 'QUIT', 'JOIN', 'NOTICE', 'PART', 'NICK', '001', '002', '003', '004', '005', '251', '252', '253', '254', '255', '265', '266', '250', '332', '333', '353', '366', '372', '375', '376', '451'):
             print message
 
 
