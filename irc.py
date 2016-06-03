@@ -89,26 +89,29 @@ class IrcClient(object):
         self.sock.send('PRIVMSG %s :%s\r\n' % (channel, message))
 
     def read(self):
+        self._drain_pings()
         while len(self._messages) == 0:
             self._readbuffer += self.sock.recv(1024)
             temp = self._readbuffer.split('\n')
             self._readbuffer = temp.pop()
 
             self._messages.extend([Message(line) for line in temp])
-
-            while len(self._messages) > 0 and self._messages[0].command == 'PING':
-                ping = self._messages.pop(0)
-                if len(ping.params) > 1:
-                    cookie = ping.params[1]
-                else:
-                    cookie = self.nick
-                self.sock.send('PONG %s\r\n' % cookie)
+            self._drain_pings()
 
         return self._messages.pop(0)
 
     def messages(self):
         while True:
             yield self.read()
+
+    def _drain_pings(self):
+        while len(self._messages) > 0 and self._messages[0].command == 'PING':
+            ping = self._messages.pop(0)
+            if len(ping.params) > 1:
+                cookie = ping.params[1]
+            else:
+                cookie = self.nick
+            self.sock.send('PONG %s\r\n' % cookie)
 
 if __name__ == '__main__':
     client = IrcClient(nick='kolbyslack')
