@@ -103,7 +103,7 @@ class SlackBot(threading.Thread):
                 return
 
             user = self.slack.conn.server.users.find(event['user'])
-            message = event['text']
+            message = self.slackDecode(event['text'])
 
             if event['channel'][0] != 'D':
                 channel = self.slack.conn.server.channels.find(event['channel'])
@@ -117,22 +117,54 @@ class SlackBot(threading.Thread):
         except Exception as e:
             print 'SLACK EVENT ERROR: %s' % e
 
+    def slackDecode(self, encoded_message):
+        message = []
+        while len(encoded_message) > 0:
+            if encoded_message[:5] == '&amp;':
+                message.append('&')
+                encoded_message = encoded_message[5:]
+            elif encoded_message[:4] == '&lt;':
+                message.append('<')
+                encoded_message = encoded_message[4:]
+            elif encoded_message[:4] == '&gt;':
+                message.append('>')
+                encoded_message = encoded_message[4:]
+            else:
+                message.append(encoded_message[0])
+                encoded_message = encoded_message[1:]
+        return ''.join(message)
+
+    def slackEncode(self, message):
+        encoded_message = []
+        for c in message:
+            if c == '&':
+                encoded_message.append('&amp;')
+            elif c == '<':
+                encoded_message.append('&lt;')
+            elif c == '>':
+                encoded_message.append('&gt;')
+            else:
+                encoded_message.append(c)
+        return ''.join(encoded_message)
+
     def handleIrcMessage(self, message):
         if message.command == 'PRIVMSG':
             if message.params[0][0] == '#':
                 for channel in self.slack.conn.server.channels:
                     if channel.name == config['slack']['channel']:
+                        name = self.slackEncode(message.prefix.name)
+                        text = self.slackEncode(message.params[1])
                         if message.ctcp_command == 'ACTION':
-                            text = '_%s %s_' % (message.prefix.name, message.params[1])
+                            text = '_%s %s_' % (name, text)
                         else:
-                            text = '*%s:* %s' % (message.prefix.name, message.params[1])
+                            text = '*%s:* %s' % (name, text)
                         channel.send_message(text)
                         break
             elif 'privmsg' in config['irc']:
                 message = '@%s: %s' % (message.params[0], message.params[1])
                 user = '@%s' % config['irc']['privmsg']
                 print 'Sending %s to %s' % (message, user)
-                message_json = {'type': 'message', 'channel': user, 'text': message}
+                message_json = {'type': 'message', 'channel': user, 'text': self.slackEncode(message)}
                 self.slack.conn.server.send_to_websocket(message_json)
         elif message.command not in ('MODE', 'QUIT', 'JOIN', 'NOTICE', 'PART', 'NICK', '001', '002', '003', '004', '005', '251', '252', '253', '254', '255', '265', '266', '250', '332', '333', '353', '366', '372', '375', '376', '451'):
             print message
